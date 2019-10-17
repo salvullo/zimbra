@@ -92,6 +92,17 @@ split($0,a,": ")}
 { print tolower(mail) "+ttl=" m[2] } }' | uniq | sort
 }
 
+function people_by_afference {
+  afference=$1
+  /opt/zimbra/common/bin/ldapsearch -o ldif-wrap=no -h ds.ct.infn.it \
+-b ou=People,dc=infn,dc=it \
+-D "cn=directory manager" \
+'(&(ou=Sezione di Catania)(isMemberOf=i:infn:ct:'$afference':*)(schacUserStatus=*:attivo*))' \
+mail -w $PSSWD | gawk '{split($0,a,": ")}
+/^mail/{mail=a[2]}
+{ print tolower(mail) }' | grep -v '^$' | uniq | sort
+}
+
 #                                    
 #  _| o ._   _  ._   _|  _  ._ _|_ o 
 # (_| | |_) (/_ | | (_| (/_ | | |_ | 
@@ -141,6 +152,30 @@ function tecniciamministrativi {
    people_by_role '*d:amministrativo|*'
 }
 
+#  _                                        __                     _              
+# /   _  ._ _  ._ _  o  _  _ o  _  ._  o   (_   _ o  _  ._ _|_ o _|_ o  _ |_   _  
+# \_ (_) | | | | | | | _> _> | (_) | | |   __) (_ | (/_ | | |_ |  |  | (_ | | (/_ 
+#                                                                                 
+function csn1 {
+   people_by_afference 'csn1'
+}
+
+function csn2 {
+   people_by_afference 'csn2'
+}
+
+function csn3 {
+   people_by_afference 'csn3'
+}
+
+function csn4 {
+   people_by_afference 'csn4'
+}
+
+function csn5 {
+   people_by_afference 'csn5'
+}
+
 # _________________________________________________________________________
 #
 for l in dipendenti associati ;
@@ -151,4 +186,9 @@ done
 for l in tecnologi ricercatori responsabiliservizio tecniciamministrativi;
 do
   updatedl $l 
+done
+
+for g in csn1 csn2 csn3 csn4 csn5 ;
+do
+  updatedl $g
 done
