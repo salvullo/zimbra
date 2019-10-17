@@ -1,0 +1,154 @@
+#!/bin/bash
+
+eval $(base64 -d /etc/security/secret)
+
+ZMPROV="/opt/zimbra/bin/zmprov"
+
+function expired {
+grace=${1:-'60 days'} 
+grep -v nolimit | gawk '{ split($0,e,"+ttl=") } { 
+uid=e[1] ; 
+d=gensub(/(.+)-(.+)-(.+)/, "\\3-\\2-\\1", "g", e[2] ) ; 
+now='$(date --date "$grace ago" +%s)' ; c="date -d"d" +%s";c|getline d1;close(c); 
+if ((d1 - now) <0 ) print $0;  }'
+}
+
+function members {
+	sudo -u zimbra ${ZMPROV} gdlm $1 | grep -v '#' | grep '@'
+}
+
+function mailonly {
+	awk -F '+ttl' '{print $1}'
+}
+
+function updatedl_ex {
+# add entitled not already members
+dl=$1
+set -- $(fgrep -v -f <(members $dl@ct.infn.it | uniq) <($dl attivo | mailonly | uniq))
+for i ; do
+  echo "adlm $dl@ct.infn.it $i" | \
+tee >(sed 's/^/sudo -u zimbra \/opt\/zimbra\/bin\/zmprov /' | bash -)
+done
+
+# remove old entries no more listed as both "attivo" and "scaduto"
+set -- $(fgrep -v -f <( ( $dl attivo ; $dl scaduto ) | cat | mailonly | uniq ) <(members  $dl@ct.infn.it | uniq))
+for i ; do
+  echo "rdlm $dl@ct.infn.it $i" | \
+tee >(sed 's/^/sudo -u zimbra \/opt\/zimbra\/bin\/zmprov /' | bash -)
+done
+
+# remove no more entitled
+set -- $(fgrep -f <(members $dl@ct.infn.it | uniq) <($dl scaduto | expired '2 months' | mailonly | uniq))
+
+for i ; do
+  echo "rdlm $dl@ct.infn.it $i" | \
+tee >(sed 's/^/sudo -u zimbra \/opt\/zimbra\/bin\/zmprov /' | bash -)
+done 
+
+
+
+}
+
+function updatedl {
+# add entitled not already members
+dl=$1
+set -- $(fgrep -v -f <(members $dl@ct.infn.it) <($dl))
+for i ; do
+  echo "adlm $dl@ct.infn.it $i" | \
+tee >(sed 's/^/sudo -u zimbra \/opt\/zimbra\/bin\/zmprov /' | bash -)
+done
+
+# remove no more entitled
+set -- $(fgrep -v -f <($dl) <(members $dl@ct.infn.it))
+
+for i ; do
+  echo "rdlm $dl@ct.infn.it $i" | \
+tee >(sed 's/^/sudo -u zimbra \/opt\/zimbra\/bin\/zmprov /' | bash -)
+done 
+}
+
+function people_by_role  {
+	role=$1
+	/opt/zimbra/common/bin/ldapsearch -o ldif-wrap=no -h ds.ct.infn.it \
+-b ou=People,dc=infn,dc=it \
+-D "cn=directory manager" \
+'(&(ou=Sezione di Catania)(isMemberOf=i:infn:ct:*)(schacUserStatus=*:attivo*)(isMemberOf='$role'))' \
+mail -w $PSSWD | gawk '{split($0,a,": ")}
+/^mail/{mail=a[2]}
+{ print tolower(mail) }' | grep -v '^$' | uniq | sort
+}
+
+function people_by_position {
+	status=${2:-attivo}
+	position=${1:-dipendente}	
+	/opt/zimbra/common/bin/ldapsearch -o ldif-wrap=no -h ds.ct.infn.it \
+-b ou=People,dc=infn,dc=it \
+-D "cn=directory manager" \
+'(&(ou=Sezione di Catania)(isMemberOf=i:infn:ct:*)(schacUserStatus=*:'$position':'$status'*))' \
+mail schacUserStatus -w $PSSWD | gawk '{
+split($0,a,": ")}
+/^mail/{mail=a[2]}
+/^schacUserStatus/{ if ( match( a[2], /('$position'):'$status'\+ttl\=([0-9\-]+|nolimit)/, m) )
+{ print tolower(mail) "+ttl=" m[2] } }' | uniq | sort
+}
+
+#                                    
+#  _| o ._   _  ._   _|  _  ._ _|_ o 
+# (_| | |_) (/_ | | (_| (/_ | | |_ | 
+#       |
+function dipendenti {
+  people_by_position 'dipendente' attivo
+}
+
+#                              
+#  _.  _  _  _   _ o  _. _|_ o 
+# (_| _> _> (_) (_ | (_|  |_ | 
+#
+function associati {
+  people_by_position 'associato' attivo
+}
+
+#                                
+# _|_  _   _ ._   _  |  _   _  o 
+#  |_ (/_ (_ | | (_) | (_) (_| | 
+#                           _|                             
+function tecnologi {
+   people_by_role '*d:tecnologo|*'
+}
+
+#                                   
+# ._ o  _  _  ._ _  _. _|_  _  ._ o 
+# |  | (_ (/_ | (_ (_|  |_ (_) |  | 
+#
+function ricercatori {
+   people_by_role '*d:ricercatore|*'
+}
+
+#                                                              
+# ._ _   _ ._   _  ._   _  _. |_  o | o  _  _  ._   o _  o  _  
+# | (/_ _> |_) (_) | | _> (_| |_) | | | _> (/_ | \/ | /_ | (_) 
+#          |                                                  
+function responsabiliservizio {
+   people_by_role 'o:servizio*:resp'
+}
+
+#                                                                       
+# _|_  _   _ ._  o  _ o  _. ._ _  ._ _  o ._  o  _ _|_ ._ _. _|_ o    o 
+#  |_ (/_ (_ | | | (_ | (_| | | | | | | | | | | _>  |_ | (_|  |_ | \/ | 
+#
+function tecniciamministrativi {
+   people_by_role '*d:tecnico|*'  
+   people_by_role '*d:amministrativo|*'
+}
+
+# _________________________________________________________________________
+#
+for l in dipendenti associati ;
+do
+  updatedl_ex $l
+done      
+
+for l in tecnologi ricercatori responsabiliservizio tecniciamministrativi;
+do
+  updatedl $l 
+done
